@@ -1,0 +1,888 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>吃豆人 AI 自动寻路算法实验 · Pacman AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tektur:wght@400;700;900&family=Chakra+Petch:wght@300;400;500;600&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+/* ===== VIEWPORT BASE (fixed 1920×1080) ===== */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#0A0E27;cursor:crosshair}
+.deck-viewport{position:fixed;inset:0;overflow:hidden;background:#0A0E27}
+.deck-stage{position:absolute;left:0;top:0;width:1920px;height:1080px;overflow:hidden;transform-origin:0 0}
+.slide{position:absolute;inset:0;width:1920px;height:1080px;overflow:hidden;visibility:hidden;opacity:0;pointer-events:none;transition:opacity .05s}
+.slide.active{visibility:visible;opacity:1;pointer-events:auto;z-index:1}
+img,video,canvas,svg{max-width:100%;max-height:100%}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.2s!important}}
+
+/* ===== 8-BIT ORBIT DESIGN SYSTEM ===== */
+:root{
+  --void:#0A0E27;--navy:#0F1B3D;
+  --cyan:#5EDCF4;--pink:#F0A6CA;--yellow:#F4D03F;
+  --lav:#E2D5F2;--white:#FFFFFF;
+  --px:4px;
+  --body-dark:rgba(255,255,255,.75);
+  --body-light:rgba(15,27,61,.75);
+  --grid-bg:
+    linear-gradient(rgba(94,220,244,.07) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(94,220,244,.07) 1px,transparent 1px);
+  --grid-sz:40px 40px;
+  --scanlines:repeating-linear-gradient(0deg,transparent 0,transparent 2px,rgba(10,14,39,.05) 2px,rgba(10,14,39,.05) 4px);
+}
+
+/* ===== ATMOSPHERIC OVERLAYS ===== */
+/* grain at z49, scanlines at z50, vignette z51 */
+.slide::before{
+  content:"";position:absolute;inset:0;z-index:49;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
+  opacity:.6;mix-blend-mode:overlay;
+}
+.slide::after{
+  content:"";position:absolute;inset:0;z-index:50;pointer-events:none;
+  background:var(--scanlines);mix-blend-mode:multiply;
+}
+.slide.dark-vignette::after{
+  background:var(--scanlines),radial-gradient(ellipse at center,transparent 45%,rgba(10,14,39,.35) 100%);
+}
+
+/* ===== DARK SURFACE (void + cyan grid) ===== */
+.bg-dark{background:var(--void);background-image:var(--grid-bg);background-size:var(--grid-sz);}
+/* ===== NAVY PANEL ===== */
+.bg-navy{background:var(--navy);background-image:var(--grid-bg);background-size:var(--grid-sz);}
+/* ===== PINK SURFACE ===== */
+.bg-pink{background:var(--pink);background-image:linear-gradient(rgba(15,27,61,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(15,27,61,.08) 1px,transparent 1px);background-size:var(--grid-sz);}
+/* ===== CYAN SURFACE ===== */
+.bg-cyan-s{background:var(--cyan);background-image:linear-gradient(rgba(15,27,61,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(15,27,61,.07) 1px,transparent 1px);background-size:var(--grid-sz);}
+/* ===== LAVENDER SURFACE ===== */
+.bg-lav{background:var(--lav);background-image:linear-gradient(rgba(15,27,61,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(15,27,61,.07) 1px,transparent 1px);background-size:var(--grid-sz);}
+
+/* ===== CORNER BRACKETS ===== */
+.cb{position:absolute;width:24px;height:24px;border-color:var(--cyan);border-style:solid;border-width:0;pointer-events:none;z-index:55;}
+.cb-tl{top:-2px;left:-2px;border-top-width:4px;border-left-width:4px;}
+.cb-br{bottom:-2px;right:-2px;border-bottom-width:4px;border-right-width:4px;}
+.cb-yellow{border-color:var(--yellow);}
+.cb-pink{border-color:var(--pink);}
+
+/* ===== LABEL PILL ===== */
+.pill{display:inline-block;font-family:'Space Mono',monospace;font-size:28px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--yellow);background:var(--navy);padding:10px 20px;line-height:1;}
+.pill-cyan{color:var(--cyan);}
+.pill-pink{color:var(--pink);}
+
+/* ===== HERO BADGE ===== */
+.badge{display:inline-block;font-family:'Space Mono',monospace;font-size:27px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:var(--yellow);border:2px solid var(--yellow);padding:12px 24px;line-height:1;}
+
+/* ===== TYPOGRAPHY ===== */
+.t-hero{font-family:'Tektur',cursive;font-weight:900;font-size:168px;line-height:1.02;letter-spacing:.04em;color:var(--cyan);text-shadow:4px 4px 0 var(--yellow),8px 8px 0 var(--navy);}
+.t-hero-zh{font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:104px;line-height:1.1;letter-spacing:0;color:var(--cyan);text-shadow:4px 4px 0 var(--yellow),8px 8px 0 var(--navy);}
+.t-display{font-family:'Tektur',cursive;font-weight:700;font-size:84px;line-height:1.1;letter-spacing:.04em;color:var(--cyan);}
+.t-display-zh{font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:72px;line-height:1.15;letter-spacing:0;color:var(--cyan);}
+.t-head{font-family:'Tektur',cursive;font-weight:700;font-size:68px;line-height:1.15;letter-spacing:.04em;color:var(--cyan);}
+.t-head-zh{font-family:'Noto Sans SC',sans-serif;font-weight:700;font-size:48px;line-height:1.2;letter-spacing:0;color:var(--cyan);}
+.t-sub{font-family:'Tektur',cursive;font-weight:700;font-size:30px;line-height:1.2;letter-spacing:.04em;color:var(--white);}
+.t-sub-zh{font-family:'Noto Sans SC',sans-serif;font-weight:700;font-size:28px;line-height:1.3;letter-spacing:0;color:var(--white);}
+.t-stat{font-family:'Tektur',cursive;font-weight:900;font-size:108px;line-height:1;letter-spacing:.04em;color:var(--cyan);text-shadow:3px 3px 0 var(--navy);}
+.t-body{font-family:'Chakra Petch',sans-serif;font-weight:400;font-size:26px;line-height:1.75;color:var(--body-dark);}
+.t-body-zh{font-family:'Noto Sans SC',sans-serif;font-weight:400;font-size:26px;line-height:1.8;letter-spacing:0;color:var(--body-dark);}
+.t-mono{font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.15em;text-transform:uppercase;color:rgba(94,220,244,.65);}
+.t-mono-sm{font-family:'Space Mono',monospace;font-size:30px;letter-spacing:.12em;text-transform:uppercase;color:rgba(94,220,244,.5);}
+/* On colored surfaces, swap to navy */
+.on-light .t-head,.on-light .t-head-zh,.on-light .t-display,.on-light .t-display-zh{color:var(--navy);text-shadow:none;}
+.on-light .t-sub,.on-light .t-sub-zh{color:rgba(15,27,61,.9);}
+.on-light .t-body,.on-light .t-body-zh{color:var(--body-light);}
+.on-light .t-mono,.on-light .t-mono-sm{color:rgba(15,27,61,.5);}
+
+/* ===== STAT BLOCK ===== */
+.stat-block{position:relative;background:rgba(94,220,244,.08);border:2px solid rgba(94,220,244,.2);padding:28px 24px;display:flex;flex-direction:column;gap:8px;}
+.stat-block .cb{border-color:var(--cyan);}
+
+/* ===== FEATURE CARD (on colored surfaces) ===== */
+.fcard{position:relative;background:rgba(255,255,255,.18);backdrop-filter:blur(8px);border:2px solid rgba(15,27,61,.2);padding:28px 24px;}
+
+/* ===== PIXEL BUTTON ===== */
+.px-btn{font-family:'Tektur',cursive;font-weight:700;font-size:29px;letter-spacing:.08em;text-transform:uppercase;color:var(--navy);background:var(--cyan);padding:16px 36px;border:none;cursor:pointer;box-shadow:4px 0 0 0 var(--navy),0 4px 0 0 var(--navy),4px 4px 0 0 var(--navy),8px 4px 0 0 var(--yellow),4px 8px 0 0 var(--yellow),8px 8px 0 0 var(--yellow);transition:transform .1s,box-shadow .1s;}
+.px-btn:hover{transform:translate(2px,2px);box-shadow:2px 0 0 0 var(--navy),0 2px 0 0 var(--navy),2px 2px 0 0 var(--navy),4px 2px 0 0 var(--yellow),2px 4px 0 0 var(--yellow),4px 4px 0 0 var(--yellow);}
+
+/* ===== H-BAR CHART ===== */
+.hbar-track{height:32px;background:rgba(15,27,61,.12);position:relative;display:flex;align-items:center;}
+.hbar-fill{height:100%;background:var(--cyan);box-shadow:4px 0 0 0 var(--navy),0 4px 0 0 var(--navy),4px 4px 0 0 var(--navy);transition:width 1s cubic-bezier(.22,1,.36,1);}
+.hbar-fill.pink{background:var(--pink);}
+.hbar-fill.yellow{background:var(--yellow);}
+.hbar-label{font-family:'Space Mono',monospace;font-size:26px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--navy);position:absolute;left:8px;z-index:2;}
+.hbar-value{font-family:'Space Mono',monospace;font-size:26px;font-weight:700;letter-spacing:.08em;color:var(--cyan);margin-left:8px;white-space:nowrap;}
+
+/* ===== TIMELINE NODE ===== */
+.tl-node{width:24px;height:24px;background:var(--cyan);border:4px solid var(--navy);flex-shrink:0;}
+.tl-node.active{background:var(--yellow);}
+.tl-rail{width:4px;background:repeating-linear-gradient(to bottom,var(--navy) 0,var(--navy) 16px,transparent 16px,transparent 24px);min-height:24px;align-self:stretch;}
+
+/* ===== PIXEL QUOTE LINE ===== */
+.q-line{width:60px;height:4px;background:var(--yellow);box-shadow:4px 4px 0 var(--navy);}
+
+/* ===== NAV ===== */
+#nav-dots{position:fixed;right:28px;top:50%;transform:translateY(-50%);z-index:1000;display:flex;flex-direction:column;gap:8px;}
+.nav-dot{width:12px;height:12px;border:2px solid var(--cyan);background:transparent;cursor:pointer;transition:background .2s;}
+.nav-dot.active{background:var(--cyan);}
+#slide-counter{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1000;font-family:'Space Mono',monospace;font-size:27px;letter-spacing:.15em;text-transform:uppercase;color:var(--cyan);background:rgba(10,14,39,.7);padding:6px 16px;}
+#nav-hint{position:fixed;bottom:24px;right:68px;z-index:1000;font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.12em;color:rgba(94,220,244,.4);}
+
+/* ===== STARFIELD ===== */
+.starfield{position:absolute;inset:0;overflow:hidden;z-index:1;pointer-events:none;}
+.star-px{position:absolute;background:var(--cyan);animation:twinkle 3s infinite;}
+.star-px.y{background:var(--yellow);}
+.star-px.p{background:var(--pink);}
+@keyframes twinkle{0%,100%{opacity:.15}50%{opacity:.8}}
+
+/* ===== FLOATING PARTICLES ===== */
+.particles{position:absolute;inset:0;overflow:hidden;z-index:2;pointer-events:none;}
+.particle{position:absolute;width:8px;height:8px;animation:float-px 8s infinite;}
+@keyframes float-px{0%,100%{transform:translateY(0);opacity:.3}50%{transform:translateY(-24px);opacity:.7}}
+
+/* ===== SLIDE CONTENT LAYER ===== */
+.sc{position:absolute;inset:0;z-index:10;padding:56px 80px 72px;}
+
+/* ===== SLIDE TRANSITIONS ===== */
+.slide-enter{animation:px-in .5s cubic-bezier(.22,1,.36,1) both;}
+@keyframes px-in{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:translateX(0)}}
+.stagger>*{opacity:0;transform:translateY(16px);transition:opacity .5s,transform .5s;}
+.slide.active .stagger>*{opacity:1;transform:translateY(0);}
+.slide.active .stagger>*:nth-child(1){transition-delay:.1s}
+.slide.active .stagger>*:nth-child(2){transition-delay:.2s}
+.slide.active .stagger>*:nth-child(3){transition-delay:.3s}
+.slide.active .stagger>*:nth-child(4){transition-delay:.4s}
+.slide.active .stagger>*:nth-child(5){transition-delay:.5s}
+.slide.active .stagger>*:nth-child(6){transition-delay:.6s}
+.slide.active .stagger>*:nth-child(7){transition-delay:.7s}
+.slide.active .stagger>*:nth-child(8){transition-delay:.8s}
+
+/* ===== IMAGE FRAME ===== */
+.img-frame{position:relative;overflow:hidden;border:2px solid rgba(94,220,244,.2);}
+.img-frame img{width:100%;height:100%;object-fit:contain;object-position:center;display:block;background:#000;}
+.img-frame .cb{border-color:rgba(94,220,244,.5);}
+
+/* ===== PIXEL DIVIDER ===== */
+.px-div{width:100%;height:2px;background:var(--cyan);box-shadow:0 4px 0 var(--navy);margin:16px 0;}
+.px-div-y{background:var(--yellow);}
+
+/* ===== ALGO CARD ===== */
+.algo-card{position:relative;background:rgba(94,220,244,.05);border:2px solid rgba(94,220,244,.15);padding:36px 32px;display:flex;flex-direction:column;gap:12px;}
+.algo-card.active-card{border-color:var(--yellow);background:rgba(244,208,63,.06);}
+.algo-card.active-card .t-head-zh,.algo-card.active-card .t-sub-zh{color:var(--yellow);}
+
+/* ===== BAR CHART VERTICAL ===== */
+.vbar-wrap{display:flex;flex-direction:column;align-items:center;gap:8px;}
+.vbar{background:var(--cyan);box-shadow:4px 0 0 0 var(--navy),0 4px 0 0 var(--navy),4px 4px 0 0 var(--navy);transition:height 1s cubic-bezier(.22,1,.36,1);width:48px;}
+.vbar.pink{background:var(--pink);}
+.vbar.yellow{background:var(--yellow);}
+
+/* ===== UTILITY ===== */
+.flex{display:flex;}.flex-col{flex-direction:column;}.gap-8{gap:8px;}.gap-16{gap:16px;}.gap-24{gap:24px;}.gap-32{gap:32px;}.gap-40{gap:40px;}.gap-48{gap:56px;}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:32px;}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;}
+.grid-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;}
+.grid-2-6-4{display:grid;grid-template-columns:6fr 4fr;gap:48px;}
+.grid-4-6{display:grid;grid-template-columns:4fr 6fr;gap:48px;}
+.items-center{align-items:center;}.items-start{align-items:flex-start;}.justify-center{justify-content:center;}
+.text-center{text-align:center;}
+.w100{width:100%;}.h100{height:100%;}
+.mt-8{margin-top:8px}.mt-16{margin-top:16px}.mt-24{margin-top:24px}.mt-32{margin-top:32px}.mt-40{margin-top:40px}.mt-48{margin-top:48px}
+.mb-8{margin-bottom:8px}.mb-16{margin-bottom:16px}.mb-24{margin-bottom:24px}.mb-32{margin-bottom:32px}
+.op-60{opacity:.6}.op-45{opacity:.45}.op-80{opacity:.8}
+
+/* ===== PIPELINE STEP ===== */
+.step-row{display:flex;align-items:flex-start;gap:20px;padding:28px 0;border-bottom:1px solid rgba(94,220,244,.1);}
+.step-row:last-child{border-bottom:none;}
+.step-num{font-family:'Tektur',cursive;font-weight:700;font-size:56px;color:var(--yellow);min-width:44px;text-shadow:3px 3px 0 var(--navy);}
+.step-title{font-family:'Noto Sans SC',sans-serif;font-weight:700;font-size:29px;color:var(--white);letter-spacing:0;}
+.step-desc{font-family:'Noto Sans SC',sans-serif;font-size:30px;color:var(--body-dark);letter-spacing:0;line-height:1.7;margin-top:4px;}
+
+/* ===== ROWLINE (table row) ===== */
+.rowline{display:grid;grid-template-columns:220px 1fr 80px;gap:32px;padding:28px 0;border-bottom:1px solid rgba(94,220,244,.12);align-items:center;}
+.rowline:last-child{border-bottom:none;}
+.rl-key{font-family:'Noto Sans SC',sans-serif;font-weight:700;font-size:27px;color:var(--cyan);letter-spacing:0;}
+.rl-val{font-family:'Noto Sans SC',sans-serif;font-size:25px;color:var(--body-dark);letter-spacing:0;line-height:1.6;}
+.rl-tag{font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.1em;text-transform:uppercase;color:var(--yellow);text-align:right;}
+</style>
+</head>
+<body>
+<div class="deck-viewport">
+<div class="deck-stage" id="stage">
+
+<!-- =============== SLIDE 01 · COVER =============== -->
+<div class="slide active dark-vignette" id="s0">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars0"></div>
+  <div class="particles" id="p0"></div>
+  <div class="sc flex gap-48 items-center">
+    <!-- Left: title content -->
+    <div class="flex flex-col gap-24 stagger" style="flex:0 0 1000px">
+      <div class="flex gap-12 items-center">
+        <span class="pill">UC Berkeley · CS188</span>
+        <span class="pill pill-cyan">Pacman AI · 2026</span>
+      </div>
+      <div>
+        <div class="t-hero" style="font-size:184px;line-height:.95;">PAC-MAN</div>
+        <div class="t-hero-zh mt-8">吃豆人 AI 自动寻路</div>
+      </div>
+      <div style="font-family:'Chakra Petch',sans-serif;font-size:28px;line-height:1.8;color:rgba(255,255,255,.75);max-width:720px;">
+        以经典游戏为载体，手写实现 BFS · DFS · UCS · A* 四种图搜索算法，<br>探索启发式设计与多目标搜索的工程边界。
+      </div>
+      <div class="flex gap-16 flex-wrap">
+        <span class="badge">BFS 广度优先</span>
+        <span class="badge">DFS 深度优先</span>
+        <span class="badge">UCS 均匀代价</span>
+        <span class="badge">A★ 启发搜索</span>
+        <span class="badge">Python</span>
+      </div>
+    </div>
+    <!-- Right: game main screen -->
+    <div style="flex:1;position:relative;">
+      <div class="img-frame" style="height:740px;">
+        <div class="cb cb-tl"></div><div class="cb cb-br"></div>
+        <img src="images/image1.png" alt="吃豆人 AI 搜索实验平台">
+      </div>
+      <div class="t-mono-sm mt-16 text-center">AI 搜索算法实验平台 · 启动界面</div>
+    </div>
+  </div>
+  <!-- bottom HUD -->
+  <div style="position:absolute;bottom:32px;left:80px;right:120px;display:flex;justify-content:space-between;align-items:center;z-index:20;">
+    <span class="t-mono-sm">Python · SearchProblem 统一接口</span>
+    <span style="font-family:'Space Mono',monospace;font-size:27px;letter-spacing:.2em;color:rgba(94,220,244,.4)">INSERT COIN TO START ▶</span>
+  </div>
+</div>
+
+<!-- =============== SLIDE 02 · 实验环境 =============== -->
+<div class="slide dark-vignette" id="s1">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars1"></div>
+  <div class="sc flex flex-col gap-32">
+    <div class="flex gap-16 items-center stagger">
+      <span class="pill">The Arena</span>
+      <span class="t-mono op-60">02 · 实验环境</span>
+    </div>
+    <div class="flex gap-16 items-baseline stagger">
+      <div class="t-display" style="font-size:52px">PACMAN</div>
+      <div class="t-display-zh">游戏世界</div>
+    </div>
+    <div class="px-div"></div>
+    <!-- two col -->
+    <div class="grid-2-6-4 stagger" style="flex:1;align-items:start;gap:40px">
+      <!-- left: project structure -->
+      <div class="flex flex-col gap-24">
+        <div style="font-family:'Noto Sans SC',sans-serif;font-size:30px;line-height:1.8;color:var(--body-dark);letter-spacing:0;">
+          实验基于 UC Berkeley Pacman AI 框架，Python 写所有搜索算法，不借助 NetworkX 等库。
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0;">
+          <div class="rowline">
+            <div class="rl-key" style="font-family:'Space Mono',monospace;font-size:28px;color:var(--cyan);letter-spacing:.06em;padding-right:24px;white-space:nowrap;">search.py&nbsp;&nbsp;&nbsp;</div>
+            <div class="rl-val">BFS · DFS · UCS · A* 四种通用算法</div>
+            <div class="rl-tag">核心</div>
+          </div>
+          <div class="rowline">
+            <div class="rl-key" style="font-family:'Space Mono',monospace;font-size:26px;color:var(--cyan);letter-spacing:.04em;padding-right:24px;white-space:nowrap;">searchAgents.py&nbsp;&nbsp;&nbsp;</div>
+            <div class="rl-val">状态建模 + 启发式函数</div>
+            <div class="rl-tag">接口</div>
+          </div>
+          <div class="rowline">
+            <div class="rl-key" style="font-family:'Space Mono',monospace;font-size:28px;color:var(--cyan);letter-spacing:.06em;padding-right:24px;white-space:nowrap;">util.py&nbsp;&nbsp;&nbsp;</div>
+            <div class="rl-val">Stack · Queue · PriorityQueue</div>
+            <div class="rl-tag">工具</div>
+          </div>
+          <div class="rowline">
+            <div class="rl-key" style="font-family:'Space Mono',monospace;font-size:28px;color:var(--cyan);letter-spacing:.06em;padding-right:24px;white-space:nowrap;">pacman.py&nbsp;&nbsp;&nbsp;</div>
+            <div class="rl-val">游戏引擎 · 地图加载 · 计分</div>
+            <div class="rl-tag">引擎</div>
+          </div>
+        </div>
+        <!-- callout -->
+        <div style="border-left:4px solid var(--cyan);padding:16px 20px;background:rgba(94,220,244,.06);">
+          <div class="q-line mb-16"></div>
+          <div style="font-family:'Chakra Petch',sans-serif;font-size:30px;color:rgba(255,255,255,.8);line-height:1.75;font-style:italic;">
+            "所有算法只需知道状态、后继与代价，<br>无需了解游戏细节——统一接口的力量。"
+          </div>
+          <div class="t-mono-sm mt-16">— SearchProblem 抽象设计</div>
+        </div>
+      </div>
+      <!-- right: game screenshot -->
+      <div class="flex flex-col gap-16">
+        <div class="img-frame" style="height:640px;">
+          <div class="cb cb-tl"></div><div class="cb cb-br"></div>
+          <img src="images/image10.png" alt="CS188 Pacman 经典地图含幽灵">
+        </div>
+        <div class="t-mono-sm text-center" style="white-space:nowrap;font-size:24px;letter-spacing:.08em;">CS188 Pacman · 经典地图 · 含幽灵对抗</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 03 · 四算法骨架 =============== -->
+<div class="slide dark-vignette" id="s2">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars2"></div>
+  <div class="sc flex flex-col gap-28">
+    <div class="flex gap-16 items-center stagger">
+      <span class="pill">Architecture</span>
+      <span class="t-mono op-60">03 · 算法骨架</span>
+    </div>
+    <div class="flex gap-16 items-baseline stagger">
+      <div class="t-display" style="font-size:48px">FOUR</div>
+      <div class="t-display-zh">一个接口，四种展开</div>
+    </div>
+    <div class="px-div stagger"></div>
+    <div class="grid-2 stagger" style="gap:24px;flex:1">
+      <!-- DFS -->
+      <div class="algo-card">
+        <div class="cb cb-tl"></div><div class="cb cb-br cb-yellow"></div>
+        <div class="flex gap-12 items-center">
+          <span class="pill">DFS</span>
+          <span class="t-mono-sm op-60">深度优先</span>
+        </div>
+        <div class="t-sub-zh" style="color:var(--yellow);">栈 · 一路到底</div>
+        <div class="t-body-zh">使用<strong style="color:var(--yellow)">栈</strong>，沿一条分支不断深入。空间占用小，能快速找到解，但无法保证最优路径。bigMaze 路径不稳定。</div>
+        <div class="flex gap-8 mt-8">
+          <span style="font-family:'Space Mono',monospace;font-size:26px;color:var(--pink);letter-spacing:.08em;">路径: 不保证最优</span>
+        </div>
+      </div>
+      <!-- BFS -->
+      <div class="algo-card">
+        <div class="cb cb-tl cb-pink"></div><div class="cb cb-br"></div>
+        <div class="flex gap-12 items-center">
+          <span class="pill pill-pink">BFS</span>
+          <span class="t-mono-sm op-60">广度优先</span>
+        </div>
+        <div class="t-sub-zh">队列 · 逐层扩散</div>
+        <div class="t-body-zh">使用<strong style="color:var(--cyan)">队列</strong>，逐层展开，等代价时严格保证最短路径。mediumMaze 扩展 269 节点，路径 68 步最优。</div>
+        <div class="flex gap-8 mt-8">
+          <span style="font-family:'Space Mono',monospace;font-size:26px;color:var(--cyan);letter-spacing:.08em;">路径: 等代价最优</span>
+        </div>
+      </div>
+      <!-- UCS -->
+      <div class="algo-card">
+        <div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-pink"></div>
+        <div class="flex gap-12 items-center">
+          <span class="pill" style="color:var(--white)">UCS</span>
+          <span class="t-mono-sm op-60">均匀代价</span>
+        </div>
+        <div class="t-sub-zh">优先队列 · g(n)</div>
+        <div class="t-body-zh">按累积代价 <strong style="color:var(--cyan)">g(n)</strong> 排序。等代价图退化为 BFS，扩展节点完全相同，但需维护堆结构，略慢于 BFS。</div>
+        <div class="flex gap-8 mt-8">
+          <span style="font-family:'Space Mono',monospace;font-size:26px;color:var(--cyan);letter-spacing:.08em;">路径: 任意代价最优</span>
+        </div>
+      </div>
+      <!-- A* -->
+      <div class="algo-card active-card">
+        <div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-yellow"></div>
+        <div class="flex gap-12 items-center">
+          <span class="pill pill-cyan">A★</span>
+          <span class="t-mono-sm op-60">启发搜索</span>
+        </div>
+        <div class="t-sub-zh" style="color:var(--yellow);">优先队列 · f=g+h</div>
+        <div class="t-body-zh">按 <strong style="color:var(--yellow)">f(n)=g(n)+h(n)</strong> 排序。可采纳启发式保证最优解，mediumMaze 仅扩 221 节点，比 BFS 少 17.8%。</div>
+        <div class="flex gap-8 mt-8">
+          <span style="font-family:'Space Mono',monospace;font-size:26px;color:var(--yellow);letter-spacing:.08em;">路径: 最优且最高效</span>
+        </div>
+      </div>
+    </div>
+    <!-- unified pseudocode -->
+    <div class="stagger" style="background:rgba(15,27,61,.7);border:2px solid rgba(94,220,244,.2);padding:16px 24px;font-family:'Space Mono',monospace;font-size:29px;color:rgba(94,220,244,.8);letter-spacing:.04em;line-height:1.8;">
+      <span style="color:rgba(94,220,244,.45)">// Graph-Search</span> &nbsp; push start → fringe &nbsp;|&nbsp; bestCost[start]=0 &nbsp;|&nbsp;
+      <span style="color:var(--yellow)">while</span> fringe: pop → check goal → expand → push if better cost
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 04 · 幕封 (pink surface) =============== -->
+<div class="slide" id="s3">
+  <div class="bg-pink" style="position:absolute;inset:0;"></div>
+  <div class="sc on-light flex flex-col gap-32 justify-center" style="height:100%;">
+    <div class="stagger flex flex-col gap-24" style="max-width:1100px;margin:auto;">
+      <div class="flex gap-12 items-center">
+        <span class="pill" style="color:var(--navy);">Act II</span>
+        <span style="font-family:'Space Mono',monospace;font-size:27px;letter-spacing:.2em;text-transform:uppercase;color:rgba(15,27,61,.5);">Heuristics</span>
+      </div>
+      <div>
+        <div style="font-family:'Tektur',cursive;font-weight:700;font-size:104px;line-height:.95;color:var(--navy);letter-spacing:.04em;">HEURISTIC</div>
+        <div style="font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:64px;line-height:1.1;color:var(--navy);letter-spacing:0;margin-top:8px;">启发式函数</div>
+      </div>
+      <div class="px-div-y" style="background:var(--navy);box-shadow:none;"></div>
+      <div style="font-family:'Chakra Petch',sans-serif;font-size:30px;color:rgba(15,27,61,.75);line-height:1.75;max-width:700px;">
+        从单点寻路到角落巡访，再到全图清扫——<br>三个问题，三种设计，一套可采纳性证明。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 05 · 启发式函数推导 =============== -->
+<div class="slide dark-vignette" id="s6">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars6"></div>
+  <div class="sc flex flex-col gap-28">
+    <div class="flex gap-16 items-center stagger">
+      <span class="pill">Heuristics</span>
+      <span class="t-mono op-60">05 · 启发式设计与证明</span>
+    </div>
+    <div class="flex gap-16 items-baseline stagger">
+      <div class="t-display" style="font-size:44px">THREE</div>
+      <div class="t-display-zh" style=font-size:54px>三个问题 · 三种证明</div>
+    </div>
+    <div class="px-div stagger"></div>
+    <div class="grid-2-6-4 stagger" style="flex:1;gap:40px;align-items:start;">
+      <!-- left: three problems -->
+      <div class="flex flex-col gap-28">
+        <!-- P1 -->
+        <div style="padding:20px 20px;border:2px solid rgba(94,220,244,.2);background:rgba(94,220,244,.04);">
+          <div class="cb cb-tl"></div><div class="cb cb-br"></div>
+          <div class="flex gap-12 items-center mb-12"><span class="pill">P1</span><span class="t-mono-sm op-60">单点寻路</span></div>
+          <div style="font-family:'Space Mono',monospace;font-size:29px;color:var(--cyan);letter-spacing:.04em;margin-bottom:8px;">h(p) = |x−gx| + |y−gy|</div>
+          <div class="t-body-zh" style="font-size:29px;">曼哈顿距离，可采纳且一致，引导 A* 向目标方向收敛。</div>
+        </div>
+        <!-- P2 -->
+        <div style="padding:20px 20px;border:2px solid rgba(240,166,202,.25);background:rgba(240,166,202,.04);">
+          <div class="cb cb-tl cb-pink"></div><div class="cb cb-br cb-pink"></div>
+          <div class="flex gap-12 items-center mb-12"><span class="pill pill-pink">P2</span><span class="t-mono-sm op-60">角落巡访</span></div>
+          <div style="font-family:'Space Mono',monospace;font-size:27px;color:var(--pink);letter-spacing:.03em;margin-bottom:8px;">h = min d(pos,c) + MST(R)</div>
+          <div class="t-body-zh" style="font-size:29px;">到最近未访角落 + 剩余角落最小生成树权重，mediumCorners 扩展 774 节点。</div>
+        </div>
+        <!-- P3 -->
+        <div style="padding:20px 20px;border:2px solid rgba(244,208,63,.2);background:rgba(244,208,63,.03);">
+          <div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-yellow"></div>
+          <div class="flex gap-12 items-center mb-12"><span class="pill" style="color:var(--yellow)">P3</span><span class="t-mono-sm op-60">全食物搜索</span></div>
+          <div style="font-family:'Space Mono',monospace;font-size:28px;color:var(--yellow);letter-spacing:.03em;margin-bottom:8px;">h = max mazeDistance(pos, f)</div>
+          <div class="t-body-zh" style="font-size:29px;">对所有剩余食物取最远迷宫距离（BFS 预计算），比曼哈顿更紧凑的下界。</div>
+        </div>
+      </div>
+      <!-- right: corners screenshot -->
+      <div class="flex flex-col gap-16">
+        <div class="img-frame" style="height:520px;">
+          <div class="cb cb-tl"></div><div class="cb cb-br"></div>
+          <img src="images/image7.png" alt="mediumCorners A* 角落巡访">
+        </div>
+        <div class="t-mono-sm text-center">mediumCorners · A* 角落巡访 · Score −26</div>
+        <!-- callout -->
+        <div style="border-left:4px solid var(--cyan);padding:14px 16px;background:rgba(94,220,244,.06);">
+          <div class="q-line mb-12"></div>
+          <div style="font-family:'Chakra Petch',sans-serif;font-size:29px;color:rgba(255,255,255,.8);line-height:1.7;font-style:italic;">
+            "可采纳启发式保证 A* 展开必要节点，<br>比 BFS 最多减少 18% 扩展量。"
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 06 · Pipeline =============== -->
+<div class="slide dark-vignette" id="s7">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars7"></div>
+  <div class="sc flex flex-col gap-20">
+    <div class="flex gap-16 items-center stagger">
+      <span class="pill">Pipeline</span>
+      <span class="t-mono op-60">06 · 统一执行路径</span>
+    </div>
+    <div class="flex gap-16 items-baseline stagger">
+      <div class="t-display" style="font-size:44px">GRAPH</div>
+      <div class="t-display-zh" style=font-size:54px>四算法的共同骨架</div>
+    </div>
+    <div class="px-div stagger"></div>
+    <!-- pipeline steps -->
+    <div class="stagger" style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:8px 40px;align-content:start;">
+      <div class="step-row"><div class="step-num">01</div><div><div class="step-title">Init</div><div class="step-desc">push 起始状态到 fringe，bestCost[start]=0</div></div></div>
+      <div class="step-row"><div class="step-num">02</div><div><div class="step-title">Pop</div><div class="step-desc">按优先级弹出节点（栈 / 队列 / 堆）</div></div></div>
+      <div class="step-row"><div class="step-num">03</div><div><div class="step-title">Check</div><div class="step-desc">剪去过时路径；判断是否达到目标</div></div></div>
+      <div class="step-row"><div class="step-num">04</div><div><div class="step-title">Expand</div><div class="step-desc">getSuccessors 展开所有合法后继状态</div></div></div>
+      <div class="step-row"><div class="step-num">05</div><div><div class="step-title">Push</div><div class="step-desc">代价更优则更新 bestCost 并入队</div></div></div>
+      <div class="step-row"><div class="step-num">06</div><div><div class="step-title">Return</div><div class="step-desc">返回动作序列或失败信号</div></div></div>
+    </div>
+    <!-- priority difference row -->
+    <div class="stagger" style="background:rgba(15,27,61,.6);border:2px solid rgba(94,220,244,.15);padding:20px 28px;">
+      <div class="t-mono-sm mb-16">优先级排序差异 · Priority Key</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;">
+        <div><div class="pill mb-8">DFS</div><div class="t-body-zh" style="font-size:29px;">栈 LIFO · 深度优先</div></div>
+        <div><div class="pill pill-pink mb-8">BFS</div><div class="t-body-zh" style="font-size:29px;">队列 FIFO · 广度优先</div></div>
+        <div><div class="pill" style="color:var(--white)" class="mb-8">UCS</div><div class="t-body-zh" style="font-size:29px;margin-top:8px;">堆 · g(n) 排序</div></div>
+        <div><div class="pill pill-cyan mb-8">A★</div><div class="t-body-zh" style="font-size:29px;">堆 · f=g+h 排序</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 07 · 四算法路径截图 =============== -->
+<div class="slide dark-vignette" id="s4">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars4"></div>
+  <div class="sc flex flex-col gap-20">
+    <div class="flex gap-16 items-center stagger">
+      <span class="pill">Four Paths</span>
+      <span class="t-mono op-60">07 · bigMaze 同图异策</span>
+    </div>
+    <div class="flex gap-16 items-baseline stagger">
+      <div class="t-display" style="font-size:44px">BIGMAZE</div>
+      <div class="t-display-zh" style=font-size:54px>四种算法 · 四条路</div>
+    </div>
+    <div class="px-div stagger"></div>
+    <div class="grid-2 stagger" style="flex:1;gap:24px;">
+      <!-- BFS -->
+      <div class="flex flex-col gap-20">
+        <div class="flex gap-12 items-center">
+          <span class="pill pill-pink">BFS</span>
+          <span style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);">广度优先 · 逐层扩散</span>
+        </div>
+        <div class="img-frame" style="height:290px;"><div class="cb cb-tl cb-pink"></div><div class="cb cb-br cb-pink"></div><img src="images/image2.png" alt="BFS"></div>
+        <div style="font-family:'Noto Sans SC',sans-serif;font-size:25px;color:var(--body-dark);letter-spacing:0;line-height:1.7;">保证最短路径，向所有方向均匀扩散，Score: −11</div>
+      </div>
+      <!-- DFS -->
+      <div class="flex flex-col gap-20">
+        <div class="flex gap-12 items-center">
+          <span class="pill">DFS</span>
+          <span style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);">深度优先 · 一路到底</span>
+        </div>
+        <div class="img-frame" style="height:290px;"><div class="cb cb-tl"></div><div class="cb cb-br"></div><img src="images/image3.png" alt="DFS"></div>
+        <div style="font-family:'Noto Sans SC',sans-serif;font-size:25px;color:var(--body-dark);letter-spacing:0;line-height:1.7;">路径不规则，不保证最优，Score: −35</div>
+      </div>
+      <!-- UCS -->
+      <div class="flex flex-col gap-20">
+        <div class="flex gap-12 items-center">
+          <span class="pill" style="color:var(--white)">UCS</span>
+          <span style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);">均匀代价 · 按代价排序</span>
+        </div>
+        <div class="img-frame" style="height:290px;"><div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-yellow"></div><img src="images/image4.png" alt="UCS"></div>
+        <div style="font-family:'Noto Sans SC',sans-serif;font-size:25px;color:var(--body-dark);letter-spacing:0;line-height:1.7;">等代价图等同 BFS，扩展范围最大，Score: −50</div>
+      </div>
+      <!-- A* -->
+      <div class="flex flex-col gap-20">
+        <div class="flex gap-12 items-center">
+          <span class="pill pill-cyan">A★</span>
+          <span style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);">启发搜索 · 目标导向</span>
+        </div>
+        <div class="img-frame" style="height:290px;"><div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-yellow"></div><img src="images/image5.png" alt="A*"></div>
+        <div style="font-family:'Noto Sans SC',sans-serif;font-size:25px;color:var(--body-dark);letter-spacing:0;line-height:1.7;">明显向目标收敛，探索区域最小，Score: −16</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 08 · 算法性能对比 (lavender surface) =============== -->
+<div class="slide" id="s5">
+  <div class="bg-lav" style="position:absolute;inset:0;"></div>
+  <div class="sc on-light flex flex-col gap-28">
+    <div class="flex gap-16 items-center stagger">
+      <span class="pill" style="color:var(--navy)">Performance</span>
+      <span style="font-family:'Space Mono',monospace;font-size:27px;letter-spacing:.2em;text-transform:uppercase;color:rgba(15,27,61,.45);">08 · 算法效率对比</span>
+    </div>
+    <div class="flex gap-16 items-baseline stagger">
+      <div style="font-family:'Tektur',cursive;font-weight:700;font-size:80px;color:var(--navy);letter-spacing:.04em;">BENCH</div>
+      <div style="font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:80px;color:var(--navy);letter-spacing:0;">数据说话</div>
+    </div>
+    <div style="height:2px;background:var(--navy);opacity:.15;margin:4px 0;" class="stagger"></div>
+
+    <div class="grid-2 stagger" style="flex:1;gap:40px;align-items:start;">
+      <!-- Left: hbar charts -->
+      <div class="flex flex-col gap-28">
+        <div style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.16em;text-transform:uppercase;color:rgba(15,27,61,.5);margin-bottom:4px;">扩展节点数 · Node Expansions (越少越好)</div>
+        <!-- mediumMaze -->
+        <div>
+          <div style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.14em;text-transform:uppercase;color:rgba(15,27,61,.4);margin-bottom:8px;">mediumMaze</div>
+          <div class="flex flex-col gap-8">
+            <div>
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;"><span style="font-family:'Space Mono',monospace;font-size:26px;color:rgba(15,27,61,.6);width:64px;text-align:right;">BFS</span><div style="flex:1;height:52px;background:rgba(15,27,61,.1);position:relative;"><div style="width:43.4%;height:100%;background:rgba(15,27,61,.35);"></div></div><span style="font-family:'Space Mono',monospace;font-size:26px;color:rgba(15,27,61,.6);margin-left:8px;">269</span></div>
+            </div>
+            <div>
+              <div style="display:flex;align-items:center;gap:12px;"><span style="font-family:'Space Mono',monospace;font-size:26px;color:var(--navy);width:64px;text-align:right;font-weight:700;">A★</span><div style="flex:1;height:52px;background:rgba(15,27,61,.1);position:relative;"><div style="width:35.6%;height:100%;background:var(--navy);box-shadow:3px 3px 0 rgba(15,27,61,.3);"></div></div><span style="font-family:'Space Mono',monospace;font-size:26px;color:var(--navy);font-weight:700;margin-left:8px;">221 <span style="color:#1a7a1a;font-size:26px;">▼17.8%</span></span></div>
+            </div>
+          </div>
+        </div>
+        <!-- bigMaze -->
+        <div>
+          <div style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.14em;text-transform:uppercase;color:rgba(15,27,61,.4);margin-bottom:8px;">bigMaze</div>
+          <div class="flex flex-col gap-8">
+            <div style="display:flex;align-items:center;gap:12px;"><span style="font-family:'Space Mono',monospace;font-size:26px;color:rgba(15,27,61,.6);width:64px;text-align:right;">BFS</span><div style="flex:1;height:52px;background:rgba(15,27,61,.1);"><div style="width:100%;height:100%;background:rgba(15,27,61,.35);"></div></div><span style="font-family:'Space Mono',monospace;font-size:26px;color:rgba(15,27,61,.6);margin-left:8px;">620</span></div>
+            <div style="display:flex;align-items:center;gap:12px;"><span style="font-family:'Space Mono',monospace;font-size:26px;color:var(--navy);width:64px;text-align:right;font-weight:700;">A★</span><div style="flex:1;height:52px;background:rgba(15,27,61,.1);"><div style="width:88.5%;height:100%;background:var(--navy);box-shadow:3px 3px 0 rgba(15,27,61,.3);"></div></div><span style="font-family:'Space Mono',monospace;font-size:26px;color:var(--navy);font-weight:700;margin-left:8px;">549 <span style="color:#1a7a1a;font-size:26px;">▼11.5%</span></span></div>
+          </div>
+        </div>
+      </div>
+      <!-- Right: path quality table -->
+      <div class="flex flex-col gap-20">
+        <div style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.16em;text-transform:uppercase;color:rgba(15,27,61,.5);margin-bottom:4px;">路径质量 · Path Quality</div>
+        <div style="display:flex;flex-direction:column;gap:0;border-top:2px solid rgba(15,27,61,.12);">
+          <div style="display:grid;grid-template-columns:140px 1fr 110px;gap:16px;padding:28px 0;border-bottom:1px solid rgba(15,27,61,.1);">
+            <span style="font-family:'Space Mono',monospace;font-size:28px;color:rgba(15,27,61,.65);">DFS</span>
+            <span style="font-family:'Noto Sans SC',sans-serif;font-size:29px;color:rgba(15,27,61,.75);letter-spacing:0;">mediumMaze <strong>130</strong> 步（最优 68）</span>
+            <span style="font-family:'Space Mono',monospace;font-size:26px;color:#c0392b;letter-spacing:.06em;text-align:right;">×1.91</span>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 1fr 110px;gap:16px;padding:28px 0;border-bottom:1px solid rgba(15,27,61,.1);">
+            <span style="font-family:'Space Mono',monospace;font-size:28px;color:rgba(15,27,61,.65);">BFS</span>
+            <span style="font-family:'Noto Sans SC',sans-serif;font-size:29px;color:rgba(15,27,61,.75);letter-spacing:0;">严格最优路径 <strong>68</strong> 步</span>
+            <span style="font-family:'Space Mono',monospace;font-size:26px;color:#1a7a1a;letter-spacing:.06em;text-align:right;">✓ 最优</span>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 1fr 110px;gap:16px;padding:28px 0;border-bottom:1px solid rgba(15,27,61,.1);">
+            <span style="font-family:'Space Mono',monospace;font-size:28px;color:rgba(15,27,61,.65);">UCS</span>
+            <span style="font-family:'Noto Sans SC',sans-serif;font-size:29px;color:rgba(15,27,61,.75);letter-spacing:0;">等代价 = BFS，路径 <strong>68</strong> 步</span>
+            <span style="font-family:'Space Mono',monospace;font-size:26px;color:#1a7a1a;letter-spacing:.06em;text-align:right;">✓ 最优</span>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 1fr 110px;gap:20px;padding:28px 0;">
+            <span style="font-family:'Space Mono',monospace;font-size:28px;font-weight:700;color:var(--navy);">A★</span>
+            <span style="font-family:'Noto Sans SC',sans-serif;font-size:29px;color:rgba(15,27,61,.75);letter-spacing:0;">路径 <strong>68</strong> 步，更少节点更快</span>
+            <span style="font-family:'Space Mono',monospace;font-size:26px;color:#1a7a1a;font-weight:700;letter-spacing:.06em;text-align:right;">✓ 最优</span>
+          </div>
+        </div>
+        <div style="margin-top:12px;border-left:4px solid var(--navy);padding:20px 24px;background:rgba(15,27,61,.06);">
+          <div style="font-family:'Noto Sans SC',sans-serif;font-size:29px;color:rgba(15,27,61,.75);letter-spacing:0;line-height:1.7;">A* 在保证最优解前提下节点扩展最少；DFS 快但路径质量差；BFS/UCS 保证最优但无方向感。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 09 · BFS vs A* 对比 =============== -->
+<div class="slide dark-vignette" id="s8">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars8"></div>
+  <div class="sc flex flex-col gap-28">
+    <div class="flex gap-16 items-center stagger">
+      <span class="pill">Comparison</span>
+      <span class="t-mono op-60">09 · BFS vs A★</span>
+    </div>
+    <div class="flex gap-16 items-baseline stagger">
+      <div class="t-display" style="font-size:44px">BFS</div>
+      <div style="font-family:'Tektur',cursive;font-weight:700;font-size:44px;color:var(--yellow);letter-spacing:.04em;">VS</div>
+      <div class="t-display" style="font-size:44px;color:var(--yellow);">A★</div>
+    </div>
+    <div class="px-div stagger"></div>
+    <div class="grid-2 stagger" style="flex:1;gap:32px;align-items:start;">
+      <!-- BFS col -->
+      <div class="flex flex-col gap-16" style="opacity:.72;">
+        <div class="flex gap-12 items-center">
+          <span class="pill pill-pink">BFS</span>
+          <span class="t-mono-sm">广度优先 · 盲目广播</span>
+        </div>
+        <div class="img-frame" style="height:340px;"><div class="cb cb-tl cb-pink"></div><div class="cb cb-br cb-pink"></div><img src="images/image2.png" alt="BFS"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="stat-block" style="padding:16px 20px;"><div class="cb cb-tl"></div><div class="cb cb-br"></div><div style="font-family:'Tektur',cursive;font-weight:900;font-size:56px;color:var(--cyan);text-shadow:3px 3px 0 var(--navy);">269</div><div class="t-mono-sm">medium 节点</div></div>
+          <div class="stat-block" style="padding:16px 20px;"><div class="cb cb-tl"></div><div class="cb cb-br"></div><div style="font-family:'Tektur',cursive;font-weight:900;font-size:56px;color:var(--cyan);text-shadow:3px 3px 0 var(--navy);">18<span style="font-size:26px">ms</span></div><div class="t-mono-sm">medium 耗时</div></div>
+        </div>
+        <div class="t-body-zh" style="font-size:29px;">逐层向外扩展，不知目标方向，覆盖整个可达区域后找到最短路径。</div>
+      </div>
+      <!-- A* col -->
+      <div class="flex flex-col gap-16">
+        <div class="flex gap-12 items-center">
+          <span class="pill pill-cyan">A★</span>
+          <span class="t-mono-sm" style="color:var(--yellow);">启发搜索 · 有导引</span>
+        </div>
+        <div class="img-frame" style="height:340px;border-color:rgba(244,208,63,.3);"><div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-yellow"></div><img src="images/image5.png" alt="A*"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="stat-block" style="padding:16px 20px;border-color:rgba(244,208,63,.25);background:rgba(244,208,63,.06);"><div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-yellow"></div><div style="font-family:'Tektur',cursive;font-weight:900;font-size:56px;color:var(--yellow);text-shadow:3px 3px 0 var(--navy);">221</div><div style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.12em;text-transform:uppercase;color:rgba(244,208,63,.6);">medium 节点</div></div>
+          <div class="stat-block" style="padding:16px 20px;border-color:rgba(244,208,63,.25);background:rgba(244,208,63,.06);"><div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-yellow"></div><div style="font-family:'Tektur',cursive;font-weight:900;font-size:56px;color:var(--yellow);text-shadow:3px 3px 0 var(--navy);">15<span style="font-size:26px">ms</span></div><div style="font-family:'Space Mono',monospace;font-size:26px;letter-spacing:.12em;text-transform:uppercase;color:rgba(244,208,63,.6);">medium 耗时</div></div>
+        </div>
+        <div class="t-body-zh" style="font-size:29px;">启发式引导搜索朝目标收敛，可采纳启发保证最优，节点扩展减少 17.8%。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 10 · 扩展实验 =============== -->
+<div class="slide dark-vignette" id="s9">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars9"></div>
+  <div class="sc flex flex-col gap-28">
+    <div class="flex gap-16 items-center stagger">
+      <span class="pill">Extension</span>
+      <span class="t-mono op-60">10 · 扩展实验</span>
+    </div>
+    <div class="flex gap-16 items-baseline stagger">
+      <div class="t-display" style="font-size:44px">BEYOND</div>
+      <div class="t-display-zh" style=font-size:54px>动态规避 × Alpha-Beta</div>
+    </div>
+    <div class="px-div stagger"></div>
+    <div class="grid-2 stagger" style="flex:1;gap:32px;align-items:start;">
+      <!-- DynamicAvoidance -->
+      <div class="flex flex-col gap-28">
+        <div style="border-bottom:2px solid rgba(94,220,244,.2);padding-bottom:12px;">
+          <div class="pill mb-12">DynamicAvoidanceAgent</div>
+          <div class="t-sub-zh">实时重规划</div>
+        </div>
+        <div class="t-body-zh">每步感知幽灵位置，将附近区域标记为危险，用 A* 实时重算绕开路径，不依赖固定路线。</div>
+        <div class="img-frame" style="height:340px;"><div class="cb cb-tl"></div><div class="cb cb-br"></div><img src="images/image10.png" alt="含幽灵地图"></div>
+        <div class="t-mono-sm text-center">经典地图 · 含幽灵对抗 · Score 237</div>
+      </div>
+      <!-- Alpha-Beta -->
+      <div class="flex flex-col gap-28">
+        <div style="border-bottom:2px solid rgba(244,208,63,.2);padding-bottom:12px;">
+          <div class="pill pill-cyan mb-12">AlphaBetaPacmanAgent</div>
+          <div class="t-sub-zh" style="color:var(--yellow);">对抗博弈决策</div>
+        </div>
+        <div class="t-body-zh">Alpha-Beta 剪枝对抗搜索树，将幽灵建模为对手，综合评估函数决策。</div>
+        <div style="background:rgba(15,27,61,.6);border:2px solid rgba(94,220,244,.15);padding:20px 24px;font-family:'Space Mono',monospace;font-size:27px;color:rgba(94,220,244,.8);line-height:1.7;letter-spacing:.03em;">
+          <div class="t-mono-sm mb-12">Alpha-Beta 博弈树（深度 3）</div>
+<pre style="margin:0;font-size:26px;line-height:1.5;color:#cce5ff">       MAX (Pacman)
+      /      |      \
+    ←         ↑        →
+MIN(Ghost) MIN(Ghost) MIN(Ghost)
+α=-∞ β=+∞   剪枝✂    evaluate()</pre>
+          <div class="t-mono-sm mt-12 op-60">MAX层选最大 · MIN层选最小 · α≥β时剪枝</div>
+        </div>
+        <div style="padding:14px 16px;border-left:4px solid var(--yellow);background:rgba(244,208,63,.06);">
+          <div style="font-family:'Noto Sans SC',sans-serif;font-size:29px;color:rgba(255,255,255,.8);letter-spacing:0;line-height:1.7;">评估函数：得分 + 食物距离奖励 + 幽灵距离惩罚</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== SLIDE 11 · 结论 (victory) =============== -->
+<div class="slide dark-vignette" id="s10">
+  <div class="bg-dark" style="position:absolute;inset:0;"></div>
+  <div class="starfield" id="stars10"></div>
+  <div class="particles" id="p10"></div>
+  <div class="sc flex gap-48 items-center">
+    <!-- left: conclusion -->
+    <div class="flex flex-col gap-24 stagger" style="flex:0 0 1100px">
+      <div class="flex gap-12 items-center">
+        <span class="pill">Takeaway</span>
+        <span class="t-mono op-60">11 · 核心结论</span>
+      </div>
+      <div>
+        <div class="t-hero" style="font-size:116px;line-height:.95;">HEURISTIC</div>
+        <div class="t-hero-zh mt-8" style="font-size:56px;">启发式的承诺</div>
+      </div>
+      <div class="q-line"></div>
+      <div style="font-family:'Chakra Petch',sans-serif;font-size:26px;color:rgba(255,255,255,.7);line-height:1.8;font-style:italic;max-width:760px;">
+        "启发式的价值，不在于猜测，而在于承诺。"
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;border-top:2px solid rgba(94,220,244,.15);padding-top:20px;">
+        <div style="padding:12px 16px;border-left:4px solid var(--cyan);background:rgba(94,220,244,.04);">
+          <div class="t-mono-sm mb-8">01 · 算法选择有条件</div>
+          <div class="t-body-zh" style="font-size:29px;">BFS 等代价最优 · A* 启发下最优且更快 · DFS 权宜之计</div>
+        </div>
+        <div style="padding:12px 16px;border-left:4px solid var(--pink);background:rgba(240,166,202,.04);">
+          <div class="t-mono-sm mb-8" style="color:rgba(240,166,202,.6);">02 · 启发式是关键杠杆</div>
+          <div class="t-body-zh" style="font-size:29px;">越紧凑剪枝越激进；多目标难点在状态建模</div>
+        </div>
+        <div style="padding:12px 16px;border-left:4px solid var(--yellow);background:rgba(244,208,63,.04);">
+          <div class="t-mono-sm mb-8" style="color:rgba(244,208,63,.6);">03 · 接口抽象的威力</div>
+          <div class="t-body-zh" style="font-size:29px;">SearchProblem 统一接口让算法与游戏解耦</div>
+        </div>
+      </div>
+      <div class="flex gap-12 flex-wrap">
+        <span class="badge">UC Berkeley · CS188</span>
+        <span class="badge">Python 实现</span>
+        <span class="badge">2026</span>
+      </div>
+    </div>
+    <!-- right: victory screen -->
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:16px;">
+      <div class="img-frame" style="max-width:520px;width:100%;height:620px;">
+        <div class="cb cb-tl cb-yellow"></div><div class="cb cb-br cb-yellow"></div>
+        <img src="images/image9.png" alt="游戏通关 VICTORY">
+      </div>
+      <div class="t-mono-sm text-center">VICTORY · 游戏通关 · 最终得分 573</div>
+    </div>
+  </div>
+</div>
+
+</div><!-- end deck-stage -->
+</div><!-- end deck-viewport -->
+
+<!-- NAV -->
+<div id="nav-dots"></div>
+<div id="slide-counter">01 / 11</div>
+<div id="nav-hint">← → KEYS</div>
+
+<script>
+/* ===== STAGE SCALER ===== */
+const stage = document.getElementById('stage');
+function resize() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const scale = Math.min(vw / 1920, vh / 1080);
+  const x = (vw - 1920 * scale) / 2, y = (vh - 1080 * scale) / 2;
+  stage.style.transform = `translate(${x}px,${y}px) scale(${scale})`;
+}
+resize(); window.addEventListener('resize', resize);
+
+/* ===== SLIDES ===== */
+const slides = Array.from(document.querySelectorAll('.slide'));
+const N = slides.length;
+let cur = 0;
+
+function goTo(idx) {
+  if (idx < 0 || idx >= N) return;
+  slides[cur].classList.remove('active');
+  cur = idx;
+  slides[cur].classList.add('active');
+  updateNav();
+}
+
+function updateNav() {
+  const dots = document.querySelectorAll('.nav-dot');
+  dots.forEach((d, i) => d.classList.toggle('active', i === cur));
+  document.getElementById('slide-counter').textContent =
+    String(cur + 1).padStart(2, '0') + ' / ' + String(N).padStart(2, '0');
+}
+
+/* Build nav dots */
+const navEl = document.getElementById('nav-dots');
+slides.forEach((_, i) => {
+  const d = document.createElement('div');
+  d.className = 'nav-dot' + (i === 0 ? ' active' : '');
+  d.addEventListener('click', () => goTo(i));
+  navEl.appendChild(d);
+});
+
+/* Keyboard */
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') goTo(cur + 1);
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') goTo(cur - 1);
+  if (e.key === 'Home') goTo(0);
+  if (e.key === 'End') goTo(N - 1);
+});
+
+/* Wheel */
+let wheelLock = false;
+document.addEventListener('wheel', e => {
+  if (wheelLock) return;
+  wheelLock = true;
+  setTimeout(() => wheelLock = false, 800);
+  if (e.deltaY > 0) goTo(cur + 1); else goTo(cur - 1);
+});
+
+/* Touch */
+let tx = 0, ty = 0;
+document.addEventListener('touchstart', e => { tx = e.touches[0].clientX; ty = e.touches[0].clientY; });
+document.addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - tx, dy = e.changedTouches[0].clientY - ty;
+  if (Math.abs(dx) > Math.abs(dy)) { if (dx < -50) goTo(cur + 1); else if (dx > 50) goTo(cur - 1); }
+  else { if (dy < -50) goTo(cur + 1); else if (dy > 50) goTo(cur - 1); }
+});
+
+/* ===== STARFIELD GENERATOR ===== */
+function makeStars(id, count) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const colors = ['', 'y', 'p'];
+  for (let i = 0; i < count; i++) {
+    const s = document.createElement('div');
+    s.className = 'star-px ' + colors[Math.floor(Math.random() * 3)];
+    const sz = Math.random() > .7 ? 4 : 2;
+    s.style.cssText = `width:${sz}px;height:${sz}px;left:${Math.random()*100}%;top:${Math.random()*100}%;animation-delay:${(Math.random()*3).toFixed(2)}s;animation-duration:${(2+Math.random()*3).toFixed(2)}s`;
+    el.appendChild(s);
+  }
+}
+['stars0','stars1','stars2','stars4','stars6','stars7','stars8','stars9','stars10'].forEach(id => makeStars(id, 80));
+
+/* ===== PARTICLE GENERATOR ===== */
+function makeParticles(id, count) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const cols = ['var(--cyan)','var(--yellow)','var(--pink)'];
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    p.style.cssText = `left:${Math.random()*100}%;top:${20+Math.random()*60}%;background:${cols[i%3]};animation-delay:${(Math.random()*8).toFixed(2)}s;opacity:.25`;
+    el.appendChild(p);
+  }
+}
+makeParticles('p0', 12); makeParticles('p10', 16);
+</script>
+</body>
+</html>
